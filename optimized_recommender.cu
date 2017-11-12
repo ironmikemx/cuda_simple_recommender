@@ -1,3 +1,22 @@
+/*
+ * optimized_recommender.cu
+ * --------------------
+ * Movie recommender based in closest neighbor using Cuda.
+ *    Computes the euclidean distance between a client and
+ *    a group of users. Chooses the closest in resemblance
+ *    based in the lowest Euclidean Distance in the ratings
+ *    of movies. Once we have our closest user it finds
+ *    which movies the client has not seen, and recommends
+ *    the top ones based on the ratings of the closest neighbor.
+ *    This version optimizes scans in the data. As it don't 
+ *    generate a subset of common movies. It works with the entire
+ *    data set. Altough expensive in memory it avoids creating 
+ *    intermediate structures.
+ *
+ *  @author: Miguel Angel Velázquez Ramos
+ *  2017
+ *
+ */
 #include <thrust/device_vector.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/sequence.h>
@@ -8,7 +27,6 @@
 #include <stdio.h>
 #include "data.cuh"
 using namespace thrust::placeholders;
-#define MASK 99
 #define INF 999
 
 
@@ -222,13 +240,15 @@ void print_char_matrix (thrust::device_vector<char>& matrix, const int x, const 
 
 
 /*
- * Function:  main 
+ * Function:  main
  * --------------------
  * compute which user has the lowest euclidean distance for Client
+ * provides 3 recommendations of movies based on the closest neighbor
  *
- *  N_users: Number of users to select from our initial data. Max 943
- *  N_movies: Number movies to select from our initial data. Max 1682
- *  Client: An user_id we want to find a closes match
+ *  amount_of_users_in_dataset: Number of users to select from our initial data. Max 943
+ *  amount_of_movies_in_dataset: Number movies to select from our initial data. Max 1682
+ *  client_id: An user_id we want to find a closes match
+ *  verbose: Print additional steps along the way
  *
  */
 int main(int argc, char** argv) {

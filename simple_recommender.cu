@@ -1,3 +1,20 @@
+/*
+ * simple_recommender.cu
+ * --------------------
+ * Movie recommender based in closest neighbor using Cuda.
+ *    Computes the euclidean distance between a client and
+ *    a group of users. Chooses the closest in resemblance
+ *    based in the lowest Euclidean Distance in the ratings
+ *    of movies. Once we have our closest user it finds
+ *    which movies the client has not seen, and recommends
+ *    the top ones based on the ratings of the closest neighbor.
+ *    This version finds common matches between client and the users
+ *    to generate a dataset of the movies in common.
+ *
+ *  @author: Miguel Angel Velázquez Ramos
+ *  2017
+ *
+ */
 #include <thrust/device_vector.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/sequence.h>
@@ -8,8 +25,6 @@
 #include <stdio.h>
 #include "data.cuh"
 using namespace thrust::placeholders;
-
-#define MASK 99
 #define INF 999
 
 /*
@@ -76,14 +91,32 @@ struct weight_division {
 
 
 
-
+/*
+ * Functor:  is_zero
+ * --------------------
+ * this operator return true when the input is zero
+ *
+ *  a: number
+ *
+ *  returns: true when the entry is zero
+ *           false otherwise
+ */
 struct is_zero : public thrust::unary_function<char, char> {
     __host__ __device__ bool operator()(char n) const {
         return n == 0;
     }
 };
 
-
+/*
+ * Functor:  is_not_zero
+ * --------------------
+ * this operator return true when the input is different to zero
+ *
+ *  a: number
+ *
+ *  returns: true when the entry is bigger than zero
+ *           false otherwise
+ */
 struct is_not_zero : public thrust::unary_function<char, char> {
     __host__ __device__ bool operator()(char n) const {
         return n > 0;
@@ -238,13 +271,15 @@ struct not_in_common {
 
 
 /*
- * Function:  main 
+ * Function:  main
  * --------------------
  * compute which user has the lowest euclidean distance for Client
+ * provides 3 recommendations of movies based on the closest neighbor
  *
- *  N_users: Number of users to select from our initial data. Max 943
- *  N_movies: Number movies to select from our initial data. Max 1682
- *  Client: An user_id we want to find a closes match
+ *  amount_of_users_in_dataset: Number of users to select from our initial data. Max 943
+ *  amount_of_movies_in_dataset: Number movies to select from our initial data. Max 1682
+ *  client_id: An user_id we want to find a closes match
+ *  verbose: Print additional steps along the way
  *
  */
 int main(int argc, char** argv) {
@@ -281,6 +316,11 @@ int main(int argc, char** argv) {
     }
 
 
+    /*
+    * Find common movies
+    * --------------------
+    * Remove movies that we don't have in common with the client
+    */
     int N_users = amount_of_users_in_dataset;
     int N_movies = thrust::count_if(client_ratings_dataset.begin(),
            client_ratings_dataset.begin() + amount_of_movies_in_dataset, is_not_zero());
@@ -295,14 +335,13 @@ int main(int argc, char** argv) {
     client_ratings_dataset.resize(reduced_dataset_size);
 
 
-
-     // Show masked ratings dataset
-       if(verbose) {
-           print_char_matrix(user_ratings_dataset, N_users, N_movies,
-              "reduced_user_ratings_dataset");
-           print_char_matrix(client_ratings_dataset, N_users, N_movies,
-              "reduced_client_ratings_dataset");
-       }
+    // Show reduced dataset
+    if(verbose) {
+        print_char_matrix(user_ratings_dataset, N_users, N_movies,
+            "reduced_user_ratings_dataset");
+        print_char_matrix(client_ratings_dataset, N_users, N_movies,
+            "reduced_client_ratings_dataset");
+    }
 
 
 
@@ -336,6 +375,7 @@ int main(int argc, char** argv) {
 
     thrust::transform(user_ratings_dataset.begin(), user_ratings_dataset.end(), 
        client_ratings_dataset.begin(), squared_differences.begin(), power_difference());
+
     // Show squared differences dataset
     if(verbose) {
         print_matrix (squared_differences, N_users, N_movies, "squared_differences");
@@ -345,13 +385,16 @@ int main(int argc, char** argv) {
        dev_null.begin(), squared_differences_sum.begin());
     thrust::transform(user_ratings_dataset.begin(), user_ratings_dataset.end(), 
         client_ratings_dataset.begin(), common_movies.begin(), one_if_not_zeros());
+
     if(verbose) {
         print_char_matrix (common_movies, N_users, N_movies, "common_movies");
     }
+
     thrust::reduce_by_key(reduce_by_key_index.begin(), reduce_by_key_index.end(), common_movies.begin(), 
         dev_null.begin(), common_movies_count.begin());
     thrust::transform(squared_differences_sum.begin(), squared_differences_sum.end(), common_movies_count.begin(), 
         euclidean_distance.begin(), weight_division());
+
 
     // Show Euclidean distance
     if(verbose) {

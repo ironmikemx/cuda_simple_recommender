@@ -1,3 +1,22 @@
+/*
+ * fast_recommender.cu
+ * --------------------
+ * Movie recommender based in closest neighbor using Cuda. 
+ *    Computes the euclidean distance between a client and 
+ *    a group of users. Chooses the closest in resemblance
+ *    based in the lowest Euclidean Distance in the ratings
+ *    of movies. Once we have our closest user it finds
+ *    which movies the client has not seen, and recommends
+ *    the top ones based on the ratings of the closest neighbor.
+ *    This version optimizes data reading as it doesn't give 
+ *    the perfect match but stops when the resemblance is good
+ *    enough
+ *
+ *  @author: Miguel Angel Velázquez Ramos
+ *  2017
+ *
+ */
+
 #include <thrust/device_vector.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/sequence.h>
@@ -8,7 +27,6 @@
 #include <stdio.h>
 #include "data.cuh"
 using namespace thrust::placeholders;
-#define MASK 99
 #define INF 999
 
 
@@ -196,9 +214,10 @@ void print_matrix (thrust::device_vector<T>& matrix, const int x, const int y, c
 }
 
 /*
- * Function:  print_matrix
+ * Function:  print_matrix_char
  * --------------------
- * print a vector as a formated 2D matrix
+ * print a vector as a formated 2D matrix where it content are chars
+ * it converts each char to int
  *
  *  matrix: vector of size x * y
  *  x: Number of rows
@@ -225,10 +244,13 @@ void print_char_matrix (thrust::device_vector<char>& matrix, const int x, const 
  * Function:  main 
  * --------------------
  * compute which user has the lowest euclidean distance for Client
+ * provides 3 recommendations of movies based on the closest neighbor
  *
- *  N_users: Number of users to select from our initial data. Max 943
- *  N_movies: Number movies to select from our initial data. Max 1682
- *  Client: An user_id we want to find a closes match
+ *  amount_of_users_in_dataset: Number of users to select from our initial data. Max 943
+ *  amount_of_movies_in_dataset: Number movies to select from our initial data. Max 1682
+ *  client_id: An user_id we want to find a closes match
+ *  verbose: Print additional steps along the way
+ *  block_size: How many users to evaluate per iteration
  *
  */
 int main(int argc, char** argv) {
@@ -241,39 +263,29 @@ int main(int argc, char** argv) {
     const int amount_of_movies_in_dataset = atoi(argv[2]); //Movies in our initial dataset
     int client_id = atoi(argv[3]); //user_id of the person we want to find similar users for
     int verbose = atoi(argv[4]); //verbose 0 - Print only results, verbose 1 - print steps
-    const int dataset_size = amount_of_users_in_dataset * amount_of_movies_in_dataset;
+    int block_size = atoi(argv[5]); //block_size - Number of users to evaluate in each iteration
 
-   /*
-    * Dataset generation
-    * --------------------
-    * generate our initial dataset as a subset of MovieLense 100K dataset stored in data.cu 
-    */
-    thrust::device_vector<char> user_ratings_dataset(dataset_size);
-    thrust::device_vector<char> client_ratings_dataset(dataset_size);
-
-
-    // Show original ratings dataset
-    if(verbose) {
-        print_char_matrix (user_ratings_dataset, amount_of_users_in_dataset, 
-           amount_of_movies_in_dataset, "user_ratings_dataset");
-        print_char_matrix (client_ratings_dataset, amount_of_users_in_dataset,
-           amount_of_movies_in_dataset, "client_ratings_dataset");
-    }
-
-    int N_users = amount_of_users_in_dataset;
+    int N_users = block_size;
     int N_movies = amount_of_movies_in_dataset;
 
 
-   float distance = 99.99f;
-   int block_size = 15;
-   int block_id = 0;
-   int closest_peer = 0;
-   int closest_peer_offset_in_block = 0;
-
-   load_char(client_ratings_dataset, block_size, amount_of_movies_in_dataset, client_id);
+    float distance = 99.99f;
+    int block_id = 0;
+    int closest_peer = 0;
+    int closest_peer_offset_in_block = 0;
 
 
-  /*
+    thrust::device_vector<char> user_ratings_dataset(block_size * N_movies);
+    thrust::device_vector<char> client_ratings_dataset(block_size * N_movies);
+    load_char(client_ratings_dataset, block_size, N_movies, client_id);
+
+    // Show original ratings dataset
+    if(verbose) {
+        print_char_matrix (client_ratings_dataset, block_size,
+           N_movies, "client_ratings_dataset");
+    }
+
+   /*
     * Create index matrix for reduction
     * --------------------
     * create a vector that will help us to reduce by rows in next step
@@ -281,35 +293,51 @@ int main(int argc, char** argv) {
     * (1 1 1
     *  2 2 2)
     */
-    thrust::device_vector<int> seq(N_users);
-    thrust::device_vector<int> reduce_by_key_index(N_users * N_movies);
-    thrust::device_vector<int> reps(N_users, N_movies);
-    thrust::sequence(seq.begin(), seq.begin() + N_users);
+    thrust::device_vector<int> seq(block_size);
+    thrust::device_vector<int> reduce_by_key_index(block_size * N_movies);
+    thrust::device_vector<int> reps(block_size, N_movies);
+    thrust::sequence(seq.begin(), seq.begin() + block_size);
     make_matrix_index(reps.begin(), reps.end(), seq.begin(), reduce_by_key_index.begin());
 
 
-    thrust::device_vector<float> dev_null(N_users);
-    thrust::device_vector<float> squared_differences(N_users * N_movies);
-    thrust::device_vector<float> squared_differences_sum(N_users);
-    thrust::device_vector<char> common_movies(N_users * N_movies);
-    thrust::device_vector<float> common_movies_count(N_users);
-    thrust::device_vector<float> euclidean_distance(N_users);
+    thrust::device_vector<float> dev_null(block_size);
+    thrust::device_vector<float> squared_differences(block_size * N_movies);
+    thrust::device_vector<float> squared_differences_sum(block_size);
+    thrust::device_vector<char> common_movies(block_size * N_movies);
+    thrust::device_vector<float> common_movies_count(block_size);
+    thrust::device_vector<float> euclidean_distance(block_size);
 
-    thrust::device_vector<int> user_index(N_users);
+    thrust::device_vector<int> user_index(block_size);
     thrust::sequence(user_index.begin(), user_index.end(), 0, 1);
 
+   /*
+    * Find lowest euclidean distance by blocks
+    * --------------------
+    * In order to save time compute only euclidean distance for block_size amount of users
+    * if we have a good enough correspaondce, stop and recommend a movie. Continue until
+    * the similarity of an user is below the threshold. This does not find the closest
+    * match to our client, but as we load the data little by little it saves time in all
+    * the cuda mallocs 
+    */
     while(distance > 0.1f) {
-        N_users = block_size;
-        int offset_start = block_size*block_id*N_movies;
-        int offset_end = block_size*(block_id+1)*N_movies;
+        std::cout << "Start Iteration: " << block_id << "\n";
 
-        load_char_from(user_ratings_dataset, block_size, amount_of_movies_in_dataset, block_size*block_id);
+        N_users = block_size;
+        int offset_start = block_size * block_id;
+
+        load_char_from(user_ratings_dataset, block_size, amount_of_movies_in_dataset, block_size * block_id);
+        // Show original ratings dataset
+        if(verbose) {
+            print_char_matrix (user_ratings_dataset, block_size,
+               N_movies, "user_ratings_dataset");
+        }
+
        /*
         * Compute Euclidean distance
         * --------------------
         */
 
-        thrust::transform(user_ratings_dataset.begin() + offset_start,user_ratings_dataset.begin() + offset_end , 
+        thrust::transform(user_ratings_dataset.begin(), user_ratings_dataset.end(), 
         client_ratings_dataset.begin(), squared_differences.begin(), power_difference());
         // Show squared differences dataset
         if(verbose) {
@@ -318,7 +346,7 @@ int main(int argc, char** argv) {
 
         thrust::reduce_by_key(reduce_by_key_index.begin(), reduce_by_key_index.end(), squared_differences.begin(), 
            dev_null.begin(), squared_differences_sum.begin());
-        thrust::transform(user_ratings_dataset.begin()+offset_start, user_ratings_dataset.end() + offset_end, 
+        thrust::transform(user_ratings_dataset.begin(), user_ratings_dataset.end(), 
             client_ratings_dataset.begin(), common_movies.begin(), one_if_not_zeros());
         if(verbose) {
             print_char_matrix (common_movies, N_users, N_movies, "common_movies");
@@ -358,12 +386,12 @@ int main(int argc, char** argv) {
        closest_peer = user_index[answer] + offset_start / N_movies;
        closest_peer_offset_in_block = user_index[answer];
        if (client_id == closest_peer) {
-           closest_peer = user_index[answer+1] + offset_start/N_movies;
+           closest_peer = user_index[answer+1] + offset_start;
            closest_peer_offset_in_block = user_index[answer+1];
            answer++;
        }
     
-       std::cout << "Attempt: " << block_id << "\n";
+       std::cout << "End of Iteration: " << block_id << "\n";
        std::cout << "Lowest Euclidean Distance: " << euclidean_distance[answer] 
            << " from user: " << closest_peer << " \n\n";
 
