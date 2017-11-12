@@ -251,8 +251,6 @@ int main(int argc, char** argv) {
     thrust::device_vector<char> user_ratings_dataset(dataset_size);
     thrust::device_vector<char> client_ratings_dataset(dataset_size);
 
-    load_char(user_ratings_dataset, amount_of_users_in_dataset, amount_of_movies_in_dataset);
-    load_char(client_ratings_dataset, amount_of_users_in_dataset, amount_of_movies_in_dataset, client_id);
 
     // Show original ratings dataset
     if(verbose) {
@@ -270,6 +268,10 @@ int main(int argc, char** argv) {
    int block_size = 15;
    int block_id = 0;
    int closest_peer = 0;
+   int closest_peer_offset_in_block = 0;
+
+   load_char(client_ratings_dataset, block_size, amount_of_movies_in_dataset, client_id);
+
 
   /*
     * Create index matrix for reduction
@@ -296,82 +298,85 @@ int main(int argc, char** argv) {
     thrust::device_vector<int> user_index(N_users);
     thrust::sequence(user_index.begin(), user_index.end(), 0, 1);
 
-   while(distance > 0.1f) {
-       N_users = block_size;
-       int offset_start = block_size*block_id*N_movies;
-       int offset_end = block_size*(block_id+1)*N_movies;
-   /*
-    * Compute Euclidean distance
-    * --------------------
-    */
+    while(distance > 0.1f) {
+        N_users = block_size;
+        int offset_start = block_size*block_id*N_movies;
+        int offset_end = block_size*(block_id+1)*N_movies;
 
-    thrust::transform(user_ratings_dataset.begin() + offset_start,user_ratings_dataset.begin() + offset_end , 
-       client_ratings_dataset.begin(), squared_differences.begin(), power_difference());
-    // Show squared differences dataset
-    if(verbose) {
-        print_matrix (squared_differences, N_users, N_movies, "squared_differences");
-    }
+        load_char_from(user_ratings_dataset, block_size, amount_of_movies_in_dataset, block_size*block_id);
+       /*
+        * Compute Euclidean distance
+        * --------------------
+        */
 
-    thrust::reduce_by_key(reduce_by_key_index.begin(), reduce_by_key_index.end(), squared_differences.begin(), 
-       dev_null.begin(), squared_differences_sum.begin());
-    thrust::transform(user_ratings_dataset.begin()+offset_start, user_ratings_dataset.end() + offset_end, 
-        client_ratings_dataset.begin(), common_movies.begin(), one_if_not_zeros());
-    if(verbose) {
-        print_char_matrix (common_movies, N_users, N_movies, "common_movies");
-    }
-    thrust::reduce_by_key(reduce_by_key_index.begin(), reduce_by_key_index.end(), common_movies.begin(), 
-        dev_null.begin(), common_movies_count.begin());
-    thrust::transform(squared_differences_sum.begin(), squared_differences_sum.end(), common_movies_count.begin(), 
-        euclidean_distance.begin(), weight_division());
+        thrust::transform(user_ratings_dataset.begin() + offset_start,user_ratings_dataset.begin() + offset_end , 
+        client_ratings_dataset.begin(), squared_differences.begin(), power_difference());
+        // Show squared differences dataset
+        if(verbose) {
+            print_matrix (squared_differences, N_users, N_movies, "squared_differences");
+         }
 
-    // Show Euclidean distance
-    if(verbose) {
-        std::cout << "\n\n  euclidean_distances \n";
-        std::cout << "  ----------------------\n"; 
-        for(int i = 0; i < N_users; i++) {
-            std::cout << "   u[" << i << "] " << squared_differences_sum[i] << " / " << common_movies_count[i] << "=" 
-                << euclidean_distance[i] << " \n";
+        thrust::reduce_by_key(reduce_by_key_index.begin(), reduce_by_key_index.end(), squared_differences.begin(), 
+           dev_null.begin(), squared_differences_sum.begin());
+        thrust::transform(user_ratings_dataset.begin()+offset_start, user_ratings_dataset.end() + offset_end, 
+            client_ratings_dataset.begin(), common_movies.begin(), one_if_not_zeros());
+        if(verbose) {
+            print_char_matrix (common_movies, N_users, N_movies, "common_movies");
         }
-    }
+        thrust::reduce_by_key(reduce_by_key_index.begin(), reduce_by_key_index.end(), common_movies.begin(), 
+            dev_null.begin(), common_movies_count.begin());
+        thrust::transform(squared_differences_sum.begin(), squared_differences_sum.end(), common_movies_count.begin(), 
+            euclidean_distance.begin(), weight_division());
+
+       // Show Euclidean distance
+       if(verbose) {
+          std::cout << "\n\n  euclidean_distances \n";
+          std::cout << "  ----------------------\n"; 
+          for(int i = 0; i < N_users; i++) {
+              std::cout << "   u[" << i << "] " << squared_differences_sum[i] << " / " << common_movies_count[i] << "=" 
+                  << euclidean_distance[i] << " \n";
+          }
+       }
 
 
-   /*
-    * Find lowest distance in data set
-    * --------------------
-    */
-    thrust::sort_by_key(euclidean_distance.begin(), euclidean_distance.end(), 
-        user_index.begin());
-    // Show Euclidean distance
-    if(verbose) {
-        std::cout << "\n\n  sorted euclidean_distances \n";
-        std::cout << "  ----------------------\n";
-        for(int i = 0; i < N_users; i++) {
-            std::cout << "   u[" << user_index[i] << "] " << euclidean_distance[i]
-                << " \n";
-        }
-    }
-    int answer = 0;
-    closest_peer = user_index[answer] + offset_start / N_movies;
-    if (client_id == closest_peer) {
-        closest_peer = user_index[answer+1] + offset_start/N_movies;
-        answer++;
-    }
+      /*
+       * Find lowest distance in data set
+       * --------------------
+       */
+       thrust::sort_by_key(euclidean_distance.begin(), euclidean_distance.end(), 
+           user_index.begin());
+       // Show Euclidean distance
+       if(verbose) {
+           std::cout << "\n\n  sorted euclidean_distances \n";
+           std::cout << "  ----------------------\n";
+           for(int i = 0; i < N_users; i++) {
+               std::cout << "   u[" << user_index[i] << "] " << euclidean_distance[i]
+                   << " \n";
+           }
+       }
+       int answer = 0;
+       closest_peer = user_index[answer] + offset_start / N_movies;
+       closest_peer_offset_in_block = user_index[answer];
+       if (client_id == closest_peer) {
+           closest_peer = user_index[answer+1] + offset_start/N_movies;
+           closest_peer_offset_in_block = user_index[answer+1];
+           answer++;
+       }
     
-    std::cout << "Attempt: " << block_id << "\n";
-    std::cout << "Lowest Euclidean Distance: " << euclidean_distance[answer] 
-        << " from user: " << closest_peer << " \n\n";
+       std::cout << "Attempt: " << block_id << "\n";
+       std::cout << "Lowest Euclidean Distance: " << euclidean_distance[answer] 
+           << " from user: " << closest_peer << " \n\n";
 
-    distance = euclidean_distance[answer];
-    block_id++;
-
-    }
+       distance = euclidean_distance[answer];
+       block_id++;
+    } //end while
 
 
     /*
     * Recommend a movie
     * --------------------
     */
-    int offset=closest_peer * N_movies;
+    int offset=closest_peer_offset_in_block * N_movies;
     thrust::device_vector<char> possible_movies(N_movies);
 
     thrust::transform(user_ratings_dataset.begin() + offset, user_ratings_dataset.begin() 
