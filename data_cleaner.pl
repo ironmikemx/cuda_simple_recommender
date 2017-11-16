@@ -1,3 +1,8 @@
+# data_cleaner.pl
+# Miguel Velazquez 2017
+# This script cleans u.data from MovieLense 1M data set and
+# creates a data file readable for our recommender
+
 use strict;
 use warnings;
 
@@ -5,18 +10,10 @@ my $filename = 'u.data';
 open(my $fh, '<:encoding(UTF-8)', $filename)
   or die "Could not open file '$filename' $!";
 
-#my $u = 943;
-#my $m = 1682;
+my $u = 943;
+my $m = 1682;
 
-#my $u = 30;
-#my $m = 50;
 
-#Small
-my $u = 100;
-my $m = 80;
-
-#my $u = 4;
-#my $m = 8;
  
 my %users;
 while (my $row = <$fh>) {

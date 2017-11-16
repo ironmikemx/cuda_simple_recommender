@@ -2,7 +2,7 @@ use warnings;
 use strict;
 
 
-my $cmd = "ls clientfast_recommender_*";
+my $cmd = "ls demo_* | grep -v out";
 my @files = `$cmd`;
 
 foreach my $f (@files) {
@@ -12,7 +12,7 @@ foreach my $f (@files) {
   my @tokens = split("_", $f);
   $time =~ /([\d\.]+)m([\d\.]+)s/;
   my $secs = ($1 * 60) + $2;
-  chomp($tokens[5]);
-  print "$tokens[0],$tokens[2],$tokens[3],$tokens[4],$tokens[5],$secs";
+  chomp($tokens[4]);
+  print "$tokens[0],$tokens[1],$tokens[2],$tokens[3],$tokens[4],$secs";
   print "\n";
 }

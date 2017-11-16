@@ -200,11 +200,11 @@ template <typename InputIterator1, typename InputIterator2, typename OutputItera
  *
  */
 template <class T>
-void print_matrix (thrust::device_vector<T>& matrix, const int x, const int y, const char* label) {
+void print_matrix (thrust::device_vector<T>& matrix, const int x, const int y, const char* label, int offset) {
     std::cout << "\n\n  " << label << "\n";
     std::cout << "  ----------------------\n";
     for(int i = 0; i < x; i++) {
-        std::cout << "   u[" << i << "] ";
+        std::cout << "   u[" << i+offset << "] ";
         for(int j = 0; j < y; j++) {
             std::cout << matrix[i * y + j] << " ";
 	}
@@ -225,11 +225,11 @@ void print_matrix (thrust::device_vector<T>& matrix, const int x, const int y, c
  *  label: Label to display above the matrix
  *
  */
-void print_char_matrix (thrust::device_vector<char>& matrix, const int x, const int y, const char* label) {
+void print_char_matrix (thrust::device_vector<char>& matrix, const int x, const int y, const char* label, int offset) {
     std::cout << "\n\n  " << label << "\n";
     std::cout << "  ----------------------\n";
     for(int i = 0; i < x; i++) {
-        std::cout << "   u[" << i << "] ";
+        std::cout << "   u[" << i+offset << "] ";
         for(int j = 0; j < y; j++) {
             int n = (int)matrix[i * y + j];
             std::cout << n << " ";
@@ -282,7 +282,7 @@ int main(int argc, char** argv) {
     // Show original ratings dataset
     if(verbose) {
         print_char_matrix (client_ratings_dataset, block_size,
-           N_movies, "client_ratings_dataset");
+           N_movies, "client_ratings_dataset", 0);
     }
 
    /*
@@ -329,7 +329,7 @@ int main(int argc, char** argv) {
         // Show original ratings dataset
         if(verbose) {
             print_char_matrix (user_ratings_dataset, block_size,
-               N_movies, "user_ratings_dataset");
+               N_movies, "user_ratings_dataset", offset_start);
         }
 
        /*
@@ -341,7 +341,7 @@ int main(int argc, char** argv) {
         client_ratings_dataset.begin(), squared_differences.begin(), power_difference());
         // Show squared differences dataset
         if(verbose) {
-            print_matrix (squared_differences, N_users, N_movies, "squared_differences");
+            print_matrix (squared_differences, N_users, N_movies, "squared_differences", offset_start);
          }
 
         thrust::reduce_by_key(reduce_by_key_index.begin(), reduce_by_key_index.end(), squared_differences.begin(), 
@@ -349,7 +349,7 @@ int main(int argc, char** argv) {
         thrust::transform(user_ratings_dataset.begin(), user_ratings_dataset.end(), 
             client_ratings_dataset.begin(), common_movies.begin(), one_if_not_zeros());
         if(verbose) {
-            print_char_matrix (common_movies, N_users, N_movies, "common_movies");
+            print_char_matrix (common_movies, N_users, N_movies, "common_movies", offset_start);
         }
         thrust::reduce_by_key(reduce_by_key_index.begin(), reduce_by_key_index.end(), common_movies.begin(), 
             dev_null.begin(), common_movies_count.begin());
@@ -361,7 +361,7 @@ int main(int argc, char** argv) {
           std::cout << "\n\n  similarity \n";
           std::cout << "  ----------------------\n"; 
           for(int i = 0; i < N_users; i++) {
-              std::cout << "   u[" << i << "] " << squared_differences_sum[i] << " / " << common_movies_count[i] << "=" 
+              std::cout << "   u[" << i+offset_start << "] " << squared_differences_sum[i] << " / " << common_movies_count[i] << "=" 
                   << euclidean_distance[i] << " \n";
           }
        }
@@ -378,12 +378,12 @@ int main(int argc, char** argv) {
            std::cout << "\n\n  sorted similarity \n";
            std::cout << "  ----------------------\n";
            for(int i = 0; i < N_users; i++) {
-               std::cout << "   u[" << user_index[i] << "] " << euclidean_distance[i]
+               std::cout << "   u[" << user_index[i]+offset_start << "] " << euclidean_distance[i]
                    << " \n";
            }
        }
        int answer = 0;
-       closest_peer = user_index[answer] + offset_start / N_movies;
+       closest_peer = user_index[answer] + offset_start ;
        closest_peer_offset_in_block = user_index[answer];
        if (client_id == closest_peer) {
            closest_peer = user_index[answer+1] + offset_start;
