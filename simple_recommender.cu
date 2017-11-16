@@ -398,7 +398,7 @@ int main(int argc, char** argv) {
 
     // Show Euclidean distance
     if(verbose) {
-        std::cout << "\n\n  euclidean_distances \n";
+        std::cout << "\n\n  similarity \n";
         std::cout << "  ----------------------\n"; 
         for(int i = 0; i < N_users; i++) {
             std::cout << "   u[" << i << "] " << squared_differences_sum[i] << " / " << common_movies_count[i] << "=" 
@@ -417,7 +417,7 @@ int main(int argc, char** argv) {
         user_index.begin());
     // Show Euclidean distance
     if(verbose) {
-        std::cout << "\n\n  sorted euclidean_distances \n";
+        std::cout << "\n\n  sorted similarity \n";
         std::cout << "  ----------------------\n";
         for(int i = 0; i < N_users; i++) {
             std::cout << "   u[" << user_index[i] << "] " << euclidean_distance[i]
